@@ -74,7 +74,21 @@ class MyPortfolio:
         """
         TODO: Complete Task 4 Below
         """
+        # Get the assets by excluding the specified column
+        # Calculate the portfolio weights
+        self.portfolio_weights = pd.DataFrame(
+            index=self.price.index, columns=self.price.columns
+        )
 
+        for i in range(self.lookback, len(self.price)):
+            lookback_prices = self.price.iloc[i - self.lookback : i]
+            momentum_scores = lookback_prices.pct_change().mean()
+            positive_momentum = momentum_scores > 0
+            weights = positive_momentum / positive_momentum.sum()
+            self.portfolio_weights.iloc[i] = weights
+
+        self.portfolio_weights.ffill(inplace=True)
+        self.portfolio_weights.fillna(0, inplace=True)
         """
         TODO: Complete Task 4 Above
         """

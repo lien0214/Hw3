@@ -66,7 +66,7 @@ class EqualWeightPortfolio:
         """
         TODO: Complete Task 1 Below
         """
-
+        self.portfolio_weights[assets] = 1 / len(assets)
         """
         TODO: Complete Task 1 Above
         """
@@ -110,14 +110,24 @@ class RiskParityPortfolio:
     def calculate_weights(self):
         # Get the assets by excluding the specified column
         assets = df.columns[df.columns != self.exclude]
-
         # Calculate the portfolio weights
         self.portfolio_weights = pd.DataFrame(index=df.index, columns=df.columns)
-
         """
         TODO: Complete Task 2 Below
         """
+        # rolling_vols = df_returns[assets].rolling(window=self.lookback).std()
+        # inv_vols = 1 / rolling_vols
+        # weights = inv_vols.div(inv_vols.sum(axis=1), axis=0)
+        # self.portfolio_weights.loc[:, assets] = weights
+        for i in range(self.lookback + 1, len(df)):
+            R_n = df_returns[assets].iloc[i - self.lookback:i]
+            vol = R_n.std()
 
+            # Calculate inverse volatility weights
+            inv_vol = 1 / vol
+            weights = inv_vol / inv_vol.sum()
+
+            self.portfolio_weights.loc[df.index[i], assets] = weights
         """
         TODO: Complete Task 2 Above
         """
@@ -143,7 +153,6 @@ class RiskParityPortfolio:
         # Ensure portfolio returns are calculated
         if not hasattr(self, "portfolio_returns"):
             self.calculate_portfolio_returns()
-
         return self.portfolio_weights, self.portfolio_returns
 
 
@@ -193,7 +202,14 @@ class MeanVariancePortfolio:
                 # Sample Code: Initialize Decision w and the Objective
                 # NOTE: You can modify the following code
                 w = model.addMVar(n, name="w", ub=1)
-                model.setObjective(w.sum(), gp.GRB.MAXIMIZE)
+                
+                # Set the objective function: maximize (mu.T @ w - gamma/2 * w.T @ Sigma @ w)
+                obj = mu @ w - gamma / 2 * (w @ Sigma @ w)
+                model.setObjective(obj, gp.GRB.MAXIMIZE)
+
+                # Add the constraints
+                model.addConstr(w.sum() == 1, "budget")
+                model.addConstr(w >= 0, "no_short")
 
                 """
                 TODO: Complete Task 3 Below
@@ -391,7 +407,7 @@ class AssignmentJudge:
         return self.check_dataframe_similarity(df1, df2, tolerance)
 
     def check_answer_eqw(self, eqw_dataframe):
-        answer_dataframe = pd.read_pickle(self.eqw_path)
+        answer_dataframe = pd.read_pickle(self.eqw_path) 
         if self.compare_dataframe(answer_dataframe, eqw_dataframe):
             print("Problem 1 Complete - Get 10 Points")
             return 10
@@ -472,7 +488,7 @@ if __name__ == "__main__":
             if "mv" in args.score:
                 judge.check_answer_mv_list(judge.mv_list)
         elif "all" in args.score:
-            print(f"==> totoal Score = {judge.check_all_answer()} <==")
+            print(f"==> total Score = {judge.check_all_answer()} <==")
 
     """
     NOTE: For Allocation
