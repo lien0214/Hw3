@@ -50,58 +50,106 @@ Create your own strategy, you can add parameter but please remain "price" and "e
 """
 
 
+import pandas as pd
+import numpy as np
+import gurobipy as gp
+
 class MyPortfolio:
     """
     NOTE: You can modify the initialization function
     """
 
-    def __init__(self, price, exclude, lookback=50, gamma=0):
+    def __init__(self, price, exclude, lookback=20, gamma=0.01, momentum_lookback=3, target_volatility=0.1):
+        # Initialize with price data, asset to exclude, and various parameters for calculations
         self.price = price
         self.returns = price.pct_change().fillna(0)
         self.exclude = exclude
         self.lookback = lookback
         self.gamma = gamma
+        self.momentum_lookback = momentum_lookback
+        self.target_volatility = target_volatility
 
     def calculate_weights(self):
         # Get the assets by excluding the specified column
         assets = self.price.columns[self.price.columns != self.exclude]
 
-        # Calculate the portfolio weights
-        self.portfolio_weights = pd.DataFrame(
-            index=self.price.index, columns=self.price.columns
-        )
+        # Prepare a DataFrame to store portfolio weights
+        self.portfolio_weights = pd.DataFrame(index=self.price.index, columns=self.price.columns)
 
-        """
-        TODO: Complete Task 4 Below
-        """
-        # Get the assets by excluding the specified column
-        # Calculate the portfolio weights
-        self.portfolio_weights = pd.DataFrame(
-            index=self.price.index, columns=self.price.columns
-        )
+        # Calculate the portfolio weights for each time period
+        for i in range(self.lookback + 1, len(self.price)):
+            # Extract the return data for the lookback period
+            R_n = self.returns.copy()[assets].iloc[i - self.lookback : i]
+            # Calculate the momentum for the current period
+            momentum = self.calculate_momentum(i, assets)
+            # Perform mean-variance optimization to get weights
+            weights = self.mv_opt(R_n, momentum, self.gamma)
+            # Adjust weights based on the target volatility
+            vol_adjusted_weights = self.volatility_targeting(weights, R_n)
+            # Store the calculated weights
+            self.portfolio_weights.loc[self.price.index[i], assets] = vol_adjusted_weights
 
-        for i in range(self.lookback, len(self.price)):
-            lookback_prices = self.price.iloc[i - self.lookback : i]
-            momentum_scores = lookback_prices.pct_change().mean()
-            positive_momentum = momentum_scores > 0
-            weights = positive_momentum / positive_momentum.sum()
-            self.portfolio_weights.iloc[i] = weights
-
+        # Fill forward and handle any remaining NaN values
         self.portfolio_weights.ffill(inplace=True)
         self.portfolio_weights.fillna(0, inplace=True)
-        """
-        TODO: Complete Task 4 Above
-        """
 
-        self.portfolio_weights.ffill(inplace=True)
-        self.portfolio_weights.fillna(0, inplace=True)
+    def calculate_momentum(self, index, assets):
+        # Calculate momentum as the average percentage change over the momentum lookback period
+        momentum = self.price[assets].iloc[index - self.momentum_lookback:index].pct_change().mean()
+        return momentum
+
+    def mv_opt(self, R_n, momentum, gamma):
+        # Calculate the covariance matrix and mean returns adjusted for momentum
+        Sigma = R_n.cov().values
+        mu = R_n.mean().values + momentum.values
+        n = len(R_n.columns)
+
+        # Set up the optimization environment and model
+        with gp.Env(empty=True) as env:
+            env.setParam("OutputFlag", 0)
+            env.setParam("DualReductions", 0)
+            env.start()
+            with gp.Model(env=env, name="portfolio") as model:
+                # Define the optimization variables (portfolio weights)
+                w = model.addMVar(n, name="w")
+                # Define the portfolio return and variance
+                portfolio_return = mu @ w
+                portfolio_variance = w @ Sigma @ w
+                # Set the objective to maximize return adjusted for risk
+                objective = portfolio_return - (gamma / 2) * portfolio_variance
+                model.setObjective(objective, gp.GRB.MAXIMIZE)
+                # Add constraints: weights sum to 1 and no short selling
+                model.addConstr(w.sum() == 1, name="budget")
+                model.addConstr(w >= 0, name="no_short")
+                
+                model.optimize()
+
+                # Check for optimal solution and return normalized weights
+                if model.status == gp.GRB.OPTIMAL or model.status == gp.GRB.SUBOPTIMAL:
+                    weights = w.X
+                    return weights / weights.sum()  # Normalize to ensure the weights sum to 1
+                else:
+                    return np.zeros(n)
+
+    def volatility_targeting(self, weights, R_n):
+        # Calculate the portfolio volatility
+        portfolio_volatility = np.sqrt(weights @ R_n.cov().values @ weights)
+        # Scale weights to target the desired volatility
+        scaling_factor = self.target_volatility / portfolio_volatility
+        scaled_weights = weights * scaling_factor
+
+        # Ensure the scaled weights sum to 1 or less
+        if scaled_weights.sum() > 1:
+            scaled_weights = scaled_weights / scaled_weights.sum()
+
+        return scaled_weights
 
     def calculate_portfolio_returns(self):
         # Ensure weights are calculated
         if not hasattr(self, "portfolio_weights"):
             self.calculate_weights()
 
-        # Calculate the portfolio returns
+        # Calculate the portfolio returns based on the weights
         self.portfolio_returns = self.returns.copy()
         assets = self.price.columns[self.price.columns != self.exclude]
         self.portfolio_returns["Portfolio"] = (
